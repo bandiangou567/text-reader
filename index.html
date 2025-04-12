@@ -858,9 +858,12 @@
                     id: Date.now(),
                     fileName: fileName,
                     position: scrollPosition,
-                    title: `${fileName} - 位置 ${Math.floor(scrollPosition)}`,
+                    chapterIndex: window.currentChapterIndex, // 确保使用全局章节索引
+                    title: `${fileName} - 第${window.currentChapterIndex + 1}章 - 位置 ${Math.floor(scrollPosition)}`,
                     date: new Date().toLocaleString()
                 };
+                
+                console.log('添加书签，章节索引:', window.currentChapterIndex);
                 
                 // 获取现有书签
                 let bookmarks = JSON.parse(localStorage.getItem('bookmarks') || '[]');
@@ -971,7 +974,7 @@
             
             // 为书签项添加点击事件
             document.querySelectorAll('.bookmark-item').forEach(item => {
-                item.addEventListener('click', function(e) {
+                item.addEventListener('click', async function(e) {
                     // 忽略删除按钮的点击
                     if (e.target.closest('.bookmark-delete')) return;
                     
@@ -979,7 +982,74 @@
                     const bookmark = bookmarks.find(b => b.id === id);
                     
                     if (bookmark && bookmark.fileName === localStorage.getItem('lastFile')) {
-                        document.getElementById('content').scrollTop = bookmark.position;
+                        try {
+                            // 先设置当前章节索引（确保使用全局变量）
+                            window.currentChapterIndex = bookmark.chapterIndex;
+                            console.log('设置章节索引为:', window.currentChapterIndex);
+                            
+                            // 显示对应章节内容，并传入true表示需要保持滚动位置
+                            // 确保章节索引在有效范围内
+                            const actualChapterIndex = displayCurrentChapter(true);
+                            
+                            // 如果实际显示的章节与书签章节不一致，更新书签中的章节索引和全局变量
+                            if (actualChapterIndex !== undefined && actualChapterIndex !== bookmark.chapterIndex) {
+                                console.log('书签章节索引已调整:', bookmark.chapterIndex, '->', actualChapterIndex);
+                                bookmark.chapterIndex = actualChapterIndex;
+                                window.currentChapterIndex = actualChapterIndex;
+                                
+                                // 更新书签存储
+                                const updatedBookmarks = JSON.parse(localStorage.getItem('bookmarks') || '[]');
+                                const bookmarkIndex = updatedBookmarks.findIndex(b => b.id === bookmark.id);
+                                if (bookmarkIndex !== -1) {
+                                    updatedBookmarks[bookmarkIndex] = bookmark;
+                                    localStorage.setItem('bookmarks', JSON.stringify(updatedBookmarks));
+                                    console.log('已更新书签存储');
+                                }
+                            }
+                            
+                            // 更新章节导航按钮状态
+                            updateChapterNavigation();
+                            
+                            // 等待内容加载完成后滚动到书签位置
+                            const content = document.getElementById('content');
+                            if (content) {
+                                // 使用多级延迟确保内容已经完全渲染完成
+                                const scrollToBookmarkPosition = () => {
+                                    // 设置滚动位置
+                                    content.scrollTop = bookmark.position;
+                                    console.log('跳转到书签位置:', bookmark.chapterIndex, bookmark.position);
+                                    
+                                    // 添加高亮效果
+                                    const highlightPosition = content.scrollTop;
+                                    const tempHighlight = document.createElement('div');
+                                    tempHighlight.style.position = 'absolute';
+                                    tempHighlight.style.left = '0';
+                                    tempHighlight.style.right = '0';
+                                    tempHighlight.style.top = `${highlightPosition}px`;
+                                    tempHighlight.style.height = '2px';
+                                    tempHighlight.style.backgroundColor = 'var(--primary-color)';
+                                    tempHighlight.style.transition = 'opacity 1s';
+                                    content.appendChild(tempHighlight);
+                                    
+                                    // 1秒后移除高亮效果
+                                    setTimeout(() => {
+                                        tempHighlight.style.opacity = '0';
+                                        setTimeout(() => tempHighlight.remove(), 1000);
+                                    }, 1000);
+                                };
+                                
+                                // 使用两级延迟确保内容完全加载
+                                setTimeout(() => {
+                                    // 第一次尝试滚动
+                                    scrollToBookmarkPosition();
+                                    
+                                    // 再次尝试滚动，以防第一次尝试时内容尚未完全渲染
+                                    setTimeout(scrollToBookmarkPosition, 200);
+                                }, 300); // 增加延迟时间确保内容完全加载
+                            }
+                        } catch (error) {
+                            console.error('跳转到书签位置时出错:', error);
+                        }
                     }
                 });
             });
@@ -1067,16 +1137,42 @@
         }
         
         // 显示当前章节内容
-        function displayCurrentChapter() {
+        function displayCurrentChapter(keepScrollPosition = false) {
             if (chapterContents.length === 0) return;
             
             const contentElement = document.getElementById('content');
-            // 使用window.currentChapterIndex而不是局部变量
-            const chapterIndex = Math.min(window.currentChapterIndex, chapterContents.length - 1);
+            // 确保window.currentChapterIndex在有效范围内
+            if (window.currentChapterIndex < 0) window.currentChapterIndex = 0;
+            if (window.currentChapterIndex >= chapterContents.length) window.currentChapterIndex = chapterContents.length - 1;
+            
+            const chapterIndex = window.currentChapterIndex;
+            
+            // 记录当前滚动位置（如果需要保持）
+            const currentScrollPosition = keepScrollPosition ? contentElement.scrollTop : 0;
             
             // 显示当前章节内容
             contentElement.textContent = chapterContents[chapterIndex];
-            contentElement.scrollTop = 0; // 滚动到顶部
+            
+            // 更新全局变量，确保它与实际显示的章节一致
+            window.currentChapterIndex = chapterIndex;
+            
+            // 设置滚动位置
+            if (keepScrollPosition) {
+                // 如果需要保持滚动位置，使用setTimeout确保内容已渲染
+                setTimeout(() => {
+                    contentElement.scrollTop = currentScrollPosition;
+                    console.log('保持滚动位置:', currentScrollPosition);
+                }, 100); // 增加延迟时间确保内容完全渲染
+            } else {
+                // 如果不需要保持滚动位置，则滚动到顶部
+                contentElement.scrollTop = 0;
+            }
+            
+            // 输出调试信息
+            console.log('显示章节:', chapterIndex, '保持滚动位置:', keepScrollPosition);
+            
+            // 返回实际显示的章节索引，以便调用者知道实际显示的章节
+            return chapterIndex;
         }
         
         // 生成EPUB目录HTML
